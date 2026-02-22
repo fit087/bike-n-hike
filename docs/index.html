@@ -1,82 +1,217 @@
 <!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════════════╗
+  ║  FAZENDA CONTINENTE — ITINERÁRIO INTERATIVO                                 ║
+  ║  Arquivo: Fazenda_Continente_Itinerario.html                                ║
+  ║  Descrição: Visualizador de rota GPS para cicloturismo em Juiz de Fora, MG  ║
+  ║  Fonte dos dados: arquivo GPX exportado do Strava (Adolfo Correa)           ║
+  ║                                                                              ║
+  ║  ESTRUTURA DO DOCUMENTO:                                                    ║
+  ║    1. <head>   — metadados, fontes Google, estilos CSS                      ║
+  ║    2. <header> — barra superior com título e estatísticas da rota           ║
+  ║    3. <aside>  — sidebar com lista de waypoints e legenda                   ║
+  ║    4. #map-wrap / #mapCanvas  — mapa interativo renderizado em Canvas 2D    ║
+  ║    5. #elev-wrap / #elevCanvas — perfil de elevação em Canvas 2D            ║
+  ║    6. <script> — lógica JS: dados GPX, motor de mapa, eventos               ║
+  ║                                                                              ║
+  ║  DEPENDÊNCIAS EXTERNAS:                                                     ║
+  ║    • Google Fonts (opcional — fallback para fontes do sistema se offline)   ║
+  ║    • Nenhuma biblioteca JS externa (zero dependências)                      ║
+  ║                                                                              ║
+  ║  COMPATIBILIDADE: Chrome 80+, Firefox 75+, Safari 13+, Edge 80+             ║
+  ╚══════════════════════════════════════════════════════════════════════════════╝
+-->
 <html lang="pt-BR">
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     HEAD — Metadados e estilos
+     • Google Fonts carregadas via @import no CSS (pode ser removido se offline)
+     • Todas as variáveis de cor definidas em :root para fácil manutenção
+     ═══════════════════════════════════════════════════════════════════════════ -->
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fazenda Continente — Itinerário</title>
+
 <style>
+/* ── FONTES ──────────────────────────────────────────────────────────────────
+   Bebas Neue  → títulos e números grandes (display font)
+   DM Mono     → rótulos, coordenadas, dados técnicos
+   DM Sans     → texto corrido e descrições
+   NOTA: Se o Google Fonts estiver indisponível, o browser usará os fallbacks
+         ('Arial Black', monospace, 'Segoe UI') definidos em cada regra.
+   ──────────────────────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=DM+Sans:ital,wght@0,300;0,400;0,600;1,300&display=swap');
 
+/* ── PALETA DE CORES ─────────────────────────────────────────────────────────
+   Todas as cores da interface estão centralizadas aqui como variáveis CSS.
+   Para alterar o tema visual, basta modificar estes valores.
+
+   --accent  → verde-lima  : rota principal, partida, picos
+   --accent2 → laranja     : curvas/desvios
+   --accent3 → azul-ciano  : bifurcações
+   --danger  → vermelho    : chegada, descidas
+   --muted   → cinza-médio : texto secundário, rótulos
+   ──────────────────────────────────────────────────────────────────────────── */
 :root {
-  --bg: #0e0f0d;
-  --surface: #161714;
-  --border: #2a2b27;
-  --accent: #c8f060;
-  --accent2: #f0a040;
-  --accent3: #60c8f0;
-  --text: #e8e9e3;
-  --muted: #7a7b74;
-  --danger: #f06060;
+  --bg:      #0e0f0d;  /* fundo geral da página */
+  --surface: #161714;  /* superfície de painéis (sidebar, elevação) */
+  --border:  #2a2b27;  /* bordas e separadores */
+  --accent:  #c8f060;  /* verde-lima — cor primária de destaque */
+  --accent2: #f0a040;  /* laranja — curvas */
+  --accent3: #60c8f0;  /* ciano  — bifurcações */
+  --text:    #e8e9e3;  /* texto principal */
+  --muted:   #7a7b74;  /* texto secundário / rótulos */
+  --danger:  #f06060;  /* vermelho — chegada / descidas */
 }
+
+/* ── RESET E BASE ────────────────────────────────────────────────────────────
+   overflow:hidden no body evita barras de rolagem indesejadas.
+   O layout usa height:100vh + flexbox para preencher a janela exata.
+   ──────────────────────────────────────────────────────────────────────────── */
 * { margin:0; padding:0; box-sizing:border-box; }
 body {
   background:var(--bg); color:var(--text);
   font-family:'DM Sans','Segoe UI',sans-serif; font-weight:300;
   height:100vh; display:flex; flex-direction:column; overflow:hidden;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ÁREA 1: HEADER — Barra superior da página
+   ────────────────────────────────────────────────────────────────────────────
+   Layout: grid de 2 colunas
+     • Coluna esquerda  → título da rota + subtítulo
+     • Coluna direita   → estatísticas numéricas (distância, subida, altitude)
+   flex-shrink:0 impede que o header encolha quando o conteúdo abaixo cresce.
+   ════════════════════════════════════════════════════════════════════════════ */
 header {
   display:grid; grid-template-columns:1fr auto; align-items:end;
   padding:1.5rem 2rem 1rem; border-bottom:1px solid var(--border);
   gap:1rem; flex-shrink:0;
 }
+
+/* Título principal da rota — fonte display em destaque */
 .route-title {
   font-family:'Bebas Neue','Arial Black',sans-serif;
-  font-size:clamp(2.2rem,4.5vw,4rem); letter-spacing:.04em; line-height:.95;
+  font-size:clamp(2.2rem,4.5vw,4rem); /* responsivo: min 2.2rem, ideal 4.5vw, max 4rem */
+  letter-spacing:.04em; line-height:.95;
   color:var(--accent); text-shadow:0 0 40px rgba(200,240,96,.2);
 }
+
+/* Subtítulo com localização e tipo de atividade */
 .route-subtitle {
   font-size:.68rem; font-family:'DM Mono',monospace; color:var(--muted);
   letter-spacing:.14em; text-transform:uppercase; margin-top:.3rem;
 }
-.stats-header { display:flex; gap:1.5rem; text-align:right; }
-.stat-item { display:flex; flex-direction:column; gap:.1rem; }
-.stat-val { font-family:'Bebas Neue','Arial Black',sans-serif; font-size:1.8rem; color:var(--text); line-height:1; }
-.stat-val span { font-size:.8rem; color:var(--muted); }
-.stat-label { font-family:'DM Mono',monospace; font-size:.58rem; letter-spacing:.15em; color:var(--muted); text-transform:uppercase; }
 
+/* Container das estatísticas no lado direito do header */
+.stats-header { display:flex; gap:1.5rem; text-align:right; }
+
+/* Cada bloco de estatística (valor + rótulo) */
+.stat-item { display:flex; flex-direction:column; gap:.1rem; }
+
+/* Número grande da estatística */
+.stat-val {
+  font-family:'Bebas Neue','Arial Black',sans-serif;
+  font-size:1.8rem; color:var(--text); line-height:1;
+}
+/* Unidade da estatística (km, m) em tamanho menor */
+.stat-val span { font-size:.8rem; color:var(--muted); }
+
+/* Rótulo descritivo abaixo do valor */
+.stat-label {
+  font-family:'DM Mono',monospace; font-size:.58rem;
+  letter-spacing:.15em; color:var(--muted); text-transform:uppercase;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   LAYOUT PRINCIPAL — <main>
+   ────────────────────────────────────────────────────────────────────────────
+   Grid de 2 colunas:
+     • 300px   → sidebar (lista de waypoints)
+     • 1fr     → painel direito (mapa + elevação)
+   min-height:0 é necessário para que elementos filhos com overflow funcionem
+   corretamente dentro de um flex container.
+   ════════════════════════════════════════════════════════════════════════════ */
 main { display:grid; grid-template-columns:300px 1fr; flex:1; min-height:0; overflow:hidden; }
 
-.sidebar { border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+/* ════════════════════════════════════════════════════════════════════════════
+   ÁREA 2: SIDEBAR — Lista de waypoints e legenda
+   ────────────────────────────────────────────────────────────────────────────
+   Estrutura interna:
+     • .section-title  → cabeçalho fixo "Pontos de Referência"
+     • #wpList         → lista rolável de waypoints (gerada via JS)
+     • .legend         → legenda de cores na parte inferior
+   ════════════════════════════════════════════════════════════════════════════ */
+.sidebar {
+  border-right:1px solid var(--border);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+
+/* Cabeçalho fixo da sidebar — não rola com a lista */
 .section-title {
-  font-family:'DM Mono',monospace; font-size:.58rem; letter-spacing:.2em; text-transform:uppercase;
-  color:var(--muted); padding:.9rem 1.2rem .5rem; border-bottom:1px solid var(--border);
+  font-family:'DM Mono',monospace; font-size:.58rem; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--muted);
+  padding:.9rem 1.2rem .5rem; border-bottom:1px solid var(--border);
   background:var(--surface); flex-shrink:0;
 }
+
+/* Container rolável que contém todos os waypoints */
 .waypoint-list { flex:1; overflow-y:auto; }
+
+/* Scrollbar customizada (apenas Webkit/Blink) */
 .waypoint-list::-webkit-scrollbar { width:3px; }
 .waypoint-list::-webkit-scrollbar-thumb { background:var(--border); }
 
+/* ── Cada item de waypoint na sidebar ───────────────────────────────────────
+   Grid de 2 colunas:
+     • 34px  → coluna da linha vertical + ponto colorido
+     • 1fr   → coluna com texto (km, nome, descrição, tags)
+   ──────────────────────────────────────────────────────────────────────────── */
 .waypoint { display:grid; grid-template-columns:34px 1fr; cursor:pointer; transition:background .15s; }
-.waypoint:hover { background:rgba(200,240,96,.04); }
-.waypoint.active { background:rgba(200,240,96,.08); }
+.waypoint:hover  { background:rgba(200,240,96,.04); }
+.waypoint.active { background:rgba(200,240,96,.08); } /* selecionado via clique */
+
+/* Coluna esquerda: ponto circular + linha vertical de conexão */
 .wp-line { display:flex; flex-direction:column; align-items:center; padding:.7rem 0; }
+
+/* Ponto colorido que representa o tipo de waypoint.
+   A cor varia por tipo via regras abaixo (.waypoint.start, .turn, etc.) */
 .wp-dot {
-  width:9px; height:9px; border-radius:50%; border:2px solid var(--accent);
-  background:var(--bg); flex-shrink:0; z-index:2; transition:box-shadow .2s;
+  width:9px; height:9px; border-radius:50%;
+  border:2px solid var(--accent); background:var(--bg);
+  flex-shrink:0; z-index:2; transition:box-shadow .2s;
 }
-.waypoint.start .wp-dot { width:13px; height:13px; background:var(--accent); }
-.waypoint.end   .wp-dot { width:13px; height:13px; background:var(--danger); border-color:var(--danger); }
-.waypoint.turn  .wp-dot { border-color:var(--accent2); background:rgba(240,160,64,.2); }
-.waypoint.bifurcation .wp-dot { border-color:var(--accent3); background:rgba(96,200,240,.2); width:11px; height:11px; }
-.waypoint.peak  .wp-dot { border-color:var(--accent); background:rgba(200,240,96,.2); }
+
+/* ── Variações de cor por tipo de waypoint ──────────────────────────────────
+   DEPURAÇÃO: Se um ponto não aparece com a cor correta, verificar se o campo
+   'type' no array waypoints (no JS) corresponde exatamente às classes abaixo.
+   Tipos válidos: 'start' | 'end' | 'turn' | 'bifurcation' | 'peak'
+   ──────────────────────────────────────────────────────────────────────────── */
+.waypoint.start .wp-dot { width:13px; height:13px; background:var(--accent); }              /* verde sólido — maior */
+.waypoint.end   .wp-dot { width:13px; height:13px; background:var(--danger); border-color:var(--danger); } /* vermelho sólido */
+.waypoint.turn  .wp-dot { border-color:var(--accent2); background:rgba(240,160,64,.2); }    /* anel laranja */
+.waypoint.bifurcation .wp-dot { border-color:var(--accent3); background:rgba(96,200,240,.2); width:11px; height:11px; } /* anel ciano, ligeiramente maior */
+.waypoint.peak  .wp-dot { border-color:var(--accent); background:rgba(200,240,96,.2); }     /* anel verde */
+
+/* Halo ao redor do ponto quando o item está ativo (selecionado) */
 .waypoint.active .wp-dot { box-shadow:0 0 0 3px rgba(200,240,96,.25); }
+
+/* Linha vertical que conecta os pontos entre si */
 .wp-connector { width:1px; flex:1; background:var(--border); margin-top:2px; }
-.waypoint:last-child .wp-connector { display:none; }
+.waypoint:last-child .wp-connector { display:none; } /* sem linha após o último item */
+
+/* Coluna direita: informações textuais do waypoint */
 .wp-info { padding:.7rem .9rem .7rem 0; border-bottom:1px solid rgba(42,43,39,.5); }
-.wp-km { font-family:'DM Mono',monospace; font-size:.58rem; color:var(--muted); letter-spacing:.08em; margin-bottom:.15rem; }
+.wp-km   { font-family:'DM Mono',monospace; font-size:.58rem; color:var(--muted); letter-spacing:.08em; margin-bottom:.15rem; }
 .wp-name { font-size:.82rem; font-weight:400; color:var(--text); line-height:1.3; }
 .wp-desc { font-size:.68rem; color:var(--muted); margin-top:.15rem; }
 .wp-tags { margin-top:.25rem; display:flex; gap:.25rem; flex-wrap:wrap; }
+
+/* ── Tags de categoria dos waypoints ────────────────────────────────────────
+   Cada tag é uma etiqueta colorida que indica a natureza do ponto.
+   As classes CSS são aplicadas via JS usando o dicionário TC (tag classes).
+   ──────────────────────────────────────────────────────────────────────────── */
 .tag { font-family:'DM Mono',monospace; font-size:.52rem; letter-spacing:.08em; padding:.1rem .35rem; border-radius:2px; text-transform:uppercase; }
 .tag-turn    { background:rgba(240,160,64,.12); color:var(--accent2); border:1px solid rgba(240,160,64,.3); }
 .tag-bifurc  { background:rgba(96,200,240,.1);  color:var(--accent3); border:1px solid rgba(96,200,240,.3); }
@@ -85,16 +220,41 @@ main { display:grid; grid-template-columns:300px 1fr; flex:1; min-height:0; over
 .tag-start   { background:rgba(200,240,96,.2);  color:var(--accent);  border:1px solid var(--accent); }
 .tag-end     { background:rgba(240,96,96,.2);   color:var(--danger);  border:1px solid var(--danger); }
 
+/* Legenda de cores na parte inferior da sidebar */
 .legend { padding:.7rem 1.2rem; border-top:1px solid var(--border); display:flex; flex-wrap:wrap; gap:.4rem .9rem; flex-shrink:0; }
 .legend-item { display:flex; align-items:center; gap:.3rem; font-size:.62rem; color:var(--muted); font-family:'DM Mono',monospace; }
 .legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   PAINEL DIREITO — Contém o mapa e o gráfico de elevação empilhados
+   flex-direction:column distribui o espaço vertical:
+     • #map-wrap   → flex:1 (ocupa todo o espaço disponível)
+     • #elev-wrap  → altura fixa (definida pelo canvas de 75px + padding)
+   ════════════════════════════════════════════════════════════════════════════ */
 .right-panel { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
 
-#map-wrap { flex:1; position:relative; min-height:0; overflow:hidden; background:#111210; }
+/* ════════════════════════════════════════════════════════════════════════════
+   ÁREA 3: MAPA — #map-wrap e #mapCanvas
+   ────────────────────────────────────────────────────────────────────────────
+   O container #map-wrap é position:relative para ancorar os elementos
+   sobrepostos (badge de info, botões de zoom, tooltip).
+   O canvas ocupa 100% do container — o tamanho real em pixels é calculado
+   em JS via devicePixelRatio para telas de alta densidade (Retina/HiDPI).
+   ════════════════════════════════════════════════════════════════════════════ */
+#map-wrap {
+  flex:1; position:relative; min-height:0;
+  overflow:hidden; background:#111210;
+}
+
+/* O canvas de mapa preenche todo o container via CSS (width/height:100%).
+   O tamanho real em pixels (mc.width/mc.height) é definido em JS.
+   DEPURAÇÃO: Se o mapa aparecer borrado em telas Retina, verificar se
+   devicePixelRatio está sendo aplicado corretamente na função drawMap(). */
 canvas#mapCanvas { display:block; width:100%; height:100%; cursor:grab; }
 canvas#mapCanvas:active { cursor:grabbing; }
 
+/* Badge informativo sobreposto ao mapa (canto superior direito)
+   pointer-events:none → não captura cliques, deixa o mapa clicável abaixo */
 .map-badge {
   position:absolute; top:.8rem; right:.8rem;
   background:rgba(14,15,13,.85); border:1px solid var(--border); border-radius:4px;
@@ -102,6 +262,10 @@ canvas#mapCanvas:active { cursor:grabbing; }
   color:var(--muted); pointer-events:none; line-height:1.7;
 }
 .map-badge strong { color:var(--text); }
+
+/* Botões de zoom sobrepostos (canto inferior direito do mapa)
+   IDs: #zoomIn (+), #zoomOut (−), #zoomFit (⊡)
+   Os event listeners estão definidos na seção "Zoom buttons" no JS */
 .zoom-controls { position:absolute; bottom:.8rem; right:.8rem; display:flex; flex-direction:column; gap:2px; }
 .zoom-btn {
   width:26px; height:26px; background:rgba(22,23,20,.9); border:1px solid var(--border);
@@ -110,17 +274,47 @@ canvas#mapCanvas:active { cursor:grabbing; }
 }
 .zoom-btn:hover { background:var(--surface); }
 
+/* Tooltip flutuante que aparece ao clicar em um waypoint no mapa.
+   Posicionado dinamicamente via JS (showTip).
+   display:none por padrão — alterado para 'block' ao mostrar.
+   DEPURAÇÃO: Se o tooltip aparecer fora da tela, verificar a lógica de
+   reposicionamento em showTip() que ajusta tx/ty nos limites do canvas. */
 .map-tooltip {
-  position:absolute; pointer-events:none; background:rgba(22,23,20,.94);
-  border:1px solid var(--border); border-radius:3px; padding:.4rem .6rem;
-  font-size:.7rem; color:var(--text); display:none; max-width:190px; z-index:10; line-height:1.5;
+  position:absolute; pointer-events:none;
+  background:rgba(22,23,20,.94); border:1px solid var(--border); border-radius:3px;
+  padding:.4rem .6rem; font-size:.7rem; color:var(--text);
+  display:none; max-width:190px; z-index:10; line-height:1.5;
 }
+/* Linha de KM/altitude dentro do tooltip */
 .map-tooltip .tt-km { font-family:'DM Mono',monospace; font-size:.58rem; color:var(--muted); }
 
-#elev-wrap { flex-shrink:0; border-top:1px solid var(--border); padding:.5rem 1rem .4rem; background:var(--surface); }
-.elev-title { font-family:'DM Mono',monospace; font-size:.56rem; letter-spacing:.15em; color:var(--muted); text-transform:uppercase; margin-bottom:.3rem; }
+/* ════════════════════════════════════════════════════════════════════════════
+   ÁREA 4: PERFIL DE ELEVAÇÃO — #elev-wrap e #elevCanvas
+   ────────────────────────────────────────────────────────────────────────────
+   Painel fixo na parte inferior do painel direito.
+   O canvas de 75px é desenhado em JS pela função drawElev().
+   Contém: grade horizontal, área preenchida, linha de elevação e ticks
+   coloridos para cada waypoint alinhados ao eixo X (quilometragem).
+   ════════════════════════════════════════════════════════════════════════════ */
+#elev-wrap {
+  flex-shrink:0; border-top:1px solid var(--border);
+  padding:.5rem 1rem .4rem; background:var(--surface);
+}
+/* Rótulo acima do gráfico */
+.elev-title {
+  font-family:'DM Mono',monospace; font-size:.56rem; letter-spacing:.15em;
+  color:var(--muted); text-transform:uppercase; margin-bottom:.3rem;
+}
+/* Canvas do gráfico — altura fixa de 75px definida aqui via CSS.
+   MANUTENÇÃO: Para aumentar a altura do gráfico, altere o valor aqui
+   e também ajuste o padding de #elev-wrap se necessário. */
 canvas#elevCanvas { display:block; width:100%; height:75px; }
 
+/* ── RESPONSIVIDADE — telas estreitas (≤ 680px) ─────────────────────────────
+   Em mobile, o layout muda de 2 colunas para 1 coluna empilhada:
+     • mapa    → topo (60vh)
+     • sidebar → base (40vh), rolável
+   ──────────────────────────────────────────────────────────────────────────── */
 @media(max-width:680px){
   main { grid-template-columns:1fr; grid-template-rows:60vh 40vh; }
   .sidebar { order:2; grid-row:2; max-height:40vh; }
@@ -130,63 +324,247 @@ canvas#elevCanvas { display:block; width:100%; height:75px; }
 }
 </style>
 </head>
+
 <body>
 
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     ÁREA 1 — HEADER DA PÁGINA
+     ───────────────────────────────────────────────────────────────────────────
+     Contém duas seções lado a lado:
+       • Bloco esquerdo  : título da rota (.route-title) e subtítulo (.route-subtitle)
+       • Bloco direito   : três estatísticas numéricas (.stats-header)
+
+     MANUTENÇÃO: Para alterar o nome da rota, editar o texto em .route-title.
+     Para alterar as estatísticas, editar os valores dentro de .stat-val.
+     ═══════════════════════════════════════════════════════════════════════════ -->
 <header>
+
+  <!-- Bloco esquerdo: identidade da rota -->
   <div>
+    <!-- Nome principal da rota — fonte display Bebas Neue em verde-lima -->
     <div class="route-title">Fazenda Continente</div>
+    <!-- Localização e tipo de atividade em fonte mono discreta -->
     <div class="route-subtitle">Juiz de Fora · MG · Brasil · Cicloturismo</div>
   </div>
+
+  <!-- Bloco direito: estatísticas numéricas da rota (extraídas do GPX) -->
   <div class="stats-header">
+
+    <!-- Estatística 1: distância total -->
     <div class="stat-item">
       <div class="stat-val">39.3<span> km</span></div>
       <div class="stat-label">Distância</div>
     </div>
+
+    <!-- Estatística 2: ganho de altitude acumulado -->
     <div class="stat-item">
       <div class="stat-val">423<span> m</span></div>
       <div class="stat-label">Subida total</div>
     </div>
+
+    <!-- Estatística 3: faixa de altitude (mínima e máxima) -->
     <div class="stat-item">
       <div class="stat-val">683<span>–</span>826<span> m</span></div>
       <div class="stat-label">Altitude</div>
     </div>
-  </div>
-</header>
 
+  </div>
+</header><!-- fim HEADER -->
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     LAYOUT PRINCIPAL
+     Grid de 2 colunas: sidebar (300px) | painel direito (1fr)
+     ═══════════════════════════════════════════════════════════════════════════ -->
 <main>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       ÁREA 2 — SIDEBAR
+       ─────────────────────────────────────────────────────────────────────
+       Estrutura em 3 partes (flex column):
+         1. .section-title  → cabeçalho fixo (não rola)
+         2. #wpList         → lista de waypoints gerada dinamicamente pelo JS
+         3. .legend         → legenda de cores, fixada na base da sidebar
+
+       MANUTENÇÃO: Os waypoints são gerados por JS a partir do array `waypoints`.
+       Para adicionar ou remover pontos, editar o array no bloco DATA do script.
+       ═══════════════════════════════════════════════════════════════════════ -->
   <aside class="sidebar">
+
+    <!-- Cabeçalho fixo da sidebar -->
     <div class="section-title">Pontos de Referência</div>
-    <div class="waypoint-list" id="wpList"></div>
+
+    <!-- Container da lista de waypoints — preenchido dinamicamente pelo JS.
+         Cada item .waypoint é criado na seção "Sidebar" do script.
+         Ao clicar num item: destaca-o (classe .active), centraliza o mapa
+         no waypoint e exibe o tooltip. -->
+    <div class="waypoint-list" id="wpList">
+      <!-- Os itens .waypoint são inseridos aqui via JavaScript -->
+    </div>
+
+    <!-- Legenda de cores na base da sidebar
+         Deve refletir os tipos de waypoints definidos no array `waypoints`. -->
     <div class="legend">
-      <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Partida/Chegada</div>
-      <div class="legend-item"><div class="legend-dot" style="background:rgba(240,160,64,.85)"></div>Curva</div>
-      <div class="legend-item"><div class="legend-dot" style="background:rgba(96,200,240,.85)"></div>Bifurcação</div>
-      <div class="legend-item"><div class="legend-dot" style="background:rgba(200,240,96,.5)"></div>Pico</div>
-    </div>
-  </aside>
-
-  <div class="right-panel">
-    <div id="map-wrap">
-      <canvas id="mapCanvas"></canvas>
-      <div class="map-badge"><strong>GPS · 765 pts · 39.3km</strong><br>Scroll=zoom · Arraste=mover<br>Clique num ponto p/ detalhes</div>
-      <div class="zoom-controls">
-        <div class="zoom-btn" id="zoomIn">+</div>
-        <div class="zoom-btn" id="zoomOut">−</div>
-        <div class="zoom-btn" id="zoomFit" title="Encaixar">⊡</div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--accent)"></div>
+        Partida/Chegada
       </div>
-      <div class="map-tooltip" id="mapTooltip"></div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(240,160,64,.85)"></div>
+        Curva
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(96,200,240,.85)"></div>
+        Bifurcação
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(200,240,96,.5)"></div>
+        Pico
+      </div>
     </div>
-    <div id="elev-wrap">
-      <div class="elev-title">Perfil de Elevação (m)</div>
-      <canvas id="elevCanvas"></canvas>
-    </div>
-  </div>
-</main>
 
+  </aside><!-- fim SIDEBAR -->
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       PAINEL DIREITO — Mapa + Elevação empilhados verticalmente
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="right-panel">
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         ÁREA 3 — MAPA INTERATIVO (#map-wrap / #mapCanvas)
+         ─────────────────────────────────────────────────────────────────
+         O #map-wrap é o container posicionador (position:relative).
+         Dentro dele existem 4 elementos sobrepostos:
+           1. #mapCanvas   → canvas principal — toda a renderização ocorre aqui
+           2. .map-badge   → overlay informativo (canto superior direito)
+           3. .zoom-controls → botões +/−/⊡ (canto inferior direito)
+           4. #mapTooltip  → tooltip flutuante ao clicar em waypoints
+
+         A função drawMap() no JS é responsável por renderizar tudo no canvas.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div id="map-wrap">
+
+      <!-- Canvas principal do mapa — toda a rota e waypoints são desenhados aqui.
+           Tamanho real em pixels definido por JS (mc.width, mc.height).
+           Interações: arrastar para mover, scroll para zoom, clique para tooltip. -->
+      <canvas id="mapCanvas"></canvas>
+
+      <!-- Overlay informativo — aparece no canto superior direito do mapa.
+           pointer-events:none (no CSS) garante que não intercepte cliques no canvas. -->
+      <div class="map-badge">
+        <strong>GPS · 765 pts · 39.3km</strong><br>
+        Scroll=zoom · Arraste=mover<br>
+        Clique num ponto p/ detalhes
+      </div>
+
+      <!-- Controles de zoom sobrepostos ao mapa (canto inferior direito).
+           Event listeners definidos na seção "Zoom buttons" no JS.
+             #zoomIn  → amplia 1.3×  em torno do centro
+             #zoomOut → reduz  1.3×  em torno do centro
+             #zoomFit → recalcula fitBounds() e mostra a rota completa -->
+      <div class="zoom-controls">
+        <div class="zoom-btn" id="zoomIn"  title="Aproximar">+</div>
+        <div class="zoom-btn" id="zoomOut" title="Afastar">−</div>
+        <div class="zoom-btn" id="zoomFit" title="Encaixar tudo">⊡</div>
+      </div>
+
+      <!-- Tooltip flutuante exibido ao clicar em um waypoint no canvas.
+           Conteúdo (HTML interno) é gerado dinamicamente por showTip() no JS.
+           Posição (left/top) também é calculada por showTip() para não sair
+           dos limites do mapa. Oculto por padrão (display:none no CSS). -->
+      <div class="map-tooltip" id="mapTooltip"></div>
+
+    </div><!-- fim #map-wrap -->
+
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         ÁREA 4 — PERFIL DE ELEVAÇÃO (#elev-wrap / #elevCanvas)
+         ─────────────────────────────────────────────────────────────────
+         Painel fixo na base do painel direito, abaixo do mapa.
+         O canvas é desenhado pela função drawElev() no JS.
+         Conteúdo do gráfico:
+           • Grade horizontal com linhas em 700, 750, 800 e 850 m
+           • Área preenchida com gradiente verde-lima (representando o perfil)
+           • Linha de elevação em verde-lima sobre a área
+           • Ticks coloridos no eixo X para cada waypoint
+             (cor segue o tipo: laranja=curva, ciano=bifurcação, etc.)
+           • Rótulos de quilometragem no eixo X (0, 10, 20, 30, 39km)
+
+         MANUTENÇÃO: Para alterar a faixa de elevação visível, modificar
+         minE e maxE na função drawElev() no JS.
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="elev-wrap">
+      <!-- Rótulo acima do gráfico -->
+      <div class="elev-title">Perfil de Elevação (m)</div>
+      <!-- Canvas do gráfico — altura controlada pelo CSS (height:75px).
+           Desenhado por drawElev() a cada redimensionamento da janela. -->
+      <canvas id="elevCanvas"></canvas>
+    </div><!-- fim #elev-wrap -->
+
+  </div><!-- fim .right-panel -->
+
+</main><!-- fim MAIN -->
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     JAVASCRIPT — Lógica da aplicação
+     ───────────────────────────────────────────────────────────────────────────
+     Organização do script (em ordem de aparição):
+
+       BLOCO 1 — DATA          : arrays de dados GPS (track, waypoints, elevData)
+       BLOCO 2 — MAP ENGINE    : motor de renderização do mapa em Canvas 2D
+         2a. Variáveis de estado do mapa (scale, offX, offY)
+         2b. geo2n()     — converte lat/lon para coordenadas normalizadas
+         2c. fitBounds() — calcula escala/offset para encaixar a rota na tela
+         2d. toScreen()  — converte lat/lon para pixels na tela
+         2e. drawMap()   — função principal de renderização (chama as demais)
+       BLOCO 3 — ELEV CHART    : renderização do perfil de elevação
+         3a. drawElev()  — desenha grade, área, linha e ticks no elevCanvas
+       BLOCO 4 — SIDEBAR       : geração dinâmica da lista de waypoints
+         4a. Loop sobre `waypoints` → cria elementos DOM + event listeners
+       BLOCO 5 — TOOLTIP       : exibição do tooltip ao clicar no mapa
+         5a. showTip()         — monta HTML e posiciona o tooltip
+         5b. click listener no canvas → detecta waypoint mais próximo
+       BLOCO 6 — INTERAÇÕES    : pan, zoom por scroll, zoom por botões, touch
+       BLOCO 7 — INIT          : ResizeObserver + chamada inicial de renderização
+     ═══════════════════════════════════════════════════════════════════════════ -->
 <script>
-// ── Data ─────────────────────────────────────────────────────────
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BLOCO 1 — DATA
+   ────────────────────────────────────────────────────────────────────────────
+   Todos os dados foram extraídos do arquivo GPX original.
+   Formato dos arrays:
+
+   track      : Array de [lat, lon] — 765 pontos da rota GPS completa
+                Fonte: elementos <trkpt> do GPX
+                MANUTENÇÃO: Para atualizar a rota, substituir este array com
+                novos dados exportados do GPX via script Python.
+
+   waypoints  : Array de objetos — pontos de referência selecionados manualmente
+                Campos:
+                  km   → distância acumulada desde o início (em km)
+                  lat  → latitude  (graus decimais, negativo = sul)
+                  lon  → longitude (graus decimais, negativo = oeste)
+                  ele  → altitude em metros
+                  name → nome descritivo do ponto
+                  type → tipo do ponto: 'start'|'end'|'turn'|'bifurcation'|'peak'
+                         (controla a cor no mapa e na sidebar)
+                  tags → array de strings para as etiquetas coloridas
+                         Valores válidos: 'start','end','turn','bifurc','climb','descent','peak'
+                  desc → descrição curta (parte após '·' é exibida na sidebar)
+                MANUTENÇÃO: Para adicionar um waypoint, inserir um novo objeto
+                no array mantendo a ordem crescente de 'km'.
+
+   elevData   : Array de [km, altitude] — amostrado a cada ~5 pontos do GPX
+                Usado exclusivamente pelo gráfico de elevação (drawElev).
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── track: 765 pontos GPS da rota completa [lat, lon] ─────────────────── */
 const track = [[-21.74979,-43.35306],[-21.74910,-43.35345],[-21.74804,-43.35420],[-21.74780,-43.35309],[-21.74642,-43.35344],[-21.74504,-43.35381],[-21.74414,-43.35394],[-21.74384,-43.35296],[-21.74345,-43.35165],[-21.74301,-43.35072],[-21.74210,-43.34945],[-21.74136,-43.34877],[-21.74078,-43.34797],[-21.74028,-43.34694],[-21.74005,-43.34670],[-21.73904,-43.34639],[-21.73871,-43.34628],[-21.73830,-43.34604],[-21.73764,-43.34524],[-21.73740,-43.34519],[-21.73715,-43.34534],[-21.73699,-43.34548],[-21.73665,-43.34550],[-21.73551,-43.34506],[-21.73437,-43.34471],[-21.73335,-43.34447],[-21.73234,-43.34378],[-21.73147,-43.34268],[-21.73109,-43.34210],[-21.73098,-43.34136],[-21.73104,-43.34052],[-21.73117,-43.33984],[-21.73104,-43.33901],[-21.73089,-43.33829],[-21.73063,-43.33798],[-21.73023,-43.33776],[-21.72972,-43.33781],[-21.72879,-43.33843],[-21.72845,-43.33856],[-21.72792,-43.33840],[-21.72659,-43.33754],[-21.72596,-43.33753],[-21.72561,-43.33783],[-21.72511,-43.33852],[-21.72399,-43.33924],[-21.72349,-43.33966],[-21.72331,-43.34018],[-21.72343,-43.34109],[-21.72339,-43.34141],[-21.72320,-43.34165],[-21.72275,-43.34192],[-21.72222,-43.34246],[-21.72188,-43.34346],[-21.72170,-43.34375],[-21.72071,-43.34445],[-21.72048,-43.34477],[-21.71991,-43.34606],[-21.71956,-43.34696],[-21.71934,-43.34750],[-21.71915,-43.34834],[-21.71847,-43.34971],[-21.71796,-43.35087],[-21.71752,-43.35099],[-21.71643,-43.35155],[-21.71541,-43.35202],[-21.71475,-43.35209],[-21.71409,-43.35217],[-21.71339,-43.35244],[-21.71260,-43.35262],[-21.71187,-43.35278],[-21.71143,-43.35320],[-21.71095,-43.35401],[-21.71060,-43.35515],[-21.71036,-43.35573],[-21.70965,-43.35682],[-21.70939,-43.35781],[-21.70907,-43.35883],[-21.70880,-43.35947],[-21.70814,-43.35988],[-21.70711,-43.36008],[-21.70635,-43.36045],[-21.70565,-43.36075],[-21.70492,-43.36077],[-21.70470,-43.36070],[-21.70427,-43.36041],[-21.70380,-43.35946],[-21.70342,-43.35873],[-21.70289,-43.35840],[-21.70255,-43.35840],[-21.70132,-43.35860],[-21.70058,-43.35857],[-21.70006,-43.35840],[-21.69947,-43.35797],[-21.69850,-43.35717],[-21.69794,-43.35681],[-21.69702,-43.35636],[-21.69612,-43.35558],[-21.69532,-43.35484],[-21.69495,-43.35466],[-21.69467,-43.35426],[-21.69448,-43.35331],[-21.69355,-43.35217],[-21.69325,-43.35193],[-21.69254,-43.35159],[-21.69146,-43.35071],[-21.69082,-43.35000],[-21.69067,-43.34960],[-21.69040,-43.34930],[-21.68985,-43.34910],[-21.68877,-43.34917],[-21.68773,-43.34924],[-21.68608,-43.34851],[-21.68482,-43.34792],[-21.68385,-43.34716],[-21.68311,-43.34662],[-21.68255,-43.34649],[-21.68184,-43.34665],[-21.68097,-43.34684],[-21.67979,-43.34687],[-21.67948,-43.34680],[-21.67881,-43.34617],[-21.67838,-43.34510],[-21.67824,-43.34447],[-21.67806,-43.34405],[-21.67750,-43.34368],[-21.67712,-43.34297],[-21.67670,-43.34204],[-21.67635,-43.34161],[-21.67540,-43.34083],[-21.67454,-43.34014],[-21.67342,-43.33980],[-21.67214,-43.33823],[-21.67116,-43.33744],[-21.67037,-43.33716],[-21.66948,-43.33650],[-21.66806,-43.33595],[-21.66684,-43.33553],[-21.66541,-43.33510],[-21.66376,-43.33465],[-21.66212,-43.33421],[-21.66229,-43.33413],[-21.66131,-43.33423],[-21.65954,-43.33450],[-21.65776,-43.33477],[-21.65599,-43.33505],[-21.65421,-43.33532],[-21.65244,-43.33559],[-21.65066,-43.33587],[-21.64889,-43.33614],[-21.64711,-43.33641],[-21.64534,-43.33669],[-21.64356,-43.33696],[-21.64179,-43.33723],[-21.64001,-43.33751],[-21.63824,-43.33778],[-21.63646,-43.33805],[-21.63469,-43.33833],[-21.63291,-43.33860],[-21.63114,-43.33887],[-21.63004,-43.33942],[-21.62993,-43.34002],[-21.63020,-43.34054],[-21.63053,-43.34087],[-21.63105,-43.34123],[-21.63110,-43.34152],[-21.63102,-43.34236],[-21.63106,-43.34304],[-21.63151,-43.34398],[-21.63226,-43.34465],[-21.63234,-43.34494],[-21.63192,-43.34593],[-21.63189,-43.34696],[-21.63173,-43.34747],[-21.63127,-43.34839],[-21.63091,-43.34978],[-21.63071,-43.35047],[-21.62995,-43.35072],[-21.62892,-43.35067],[-21.62842,-43.35072],[-21.62821,-43.35083],[-21.62737,-43.35114],[-21.62569,-43.35175],[-21.62401,-43.35236],[-21.62233,-43.35297],[-21.62066,-43.35358],[-21.61982,-43.35388],[-21.61983,-43.35416],[-21.61945,-43.35522],[-21.61924,-43.35614],[-21.61899,-43.35739],[-21.61886,-43.35820],[-21.61894,-43.35932],[-21.61870,-43.36036],[-21.61866,-43.36124],[-21.61811,-43.36218],[-21.61803,-43.36236],[-21.61802,-43.36260],[-21.61809,-43.36296],[-21.61802,-43.36390],[-21.61817,-43.36448],[-21.61810,-43.36485],[-21.61756,-43.36512],[-21.61709,-43.36554],[-21.61678,-43.36603],[-21.61655,-43.36695],[-21.61663,-43.36780],[-21.61686,-43.36930],[-21.61673,-43.36988],[-21.61642,-43.37051],[-21.61514,-43.37167],[-21.61334,-43.37293],[-21.61161,-43.37418],[-21.60977,-43.37544],[-21.60909,-43.37610],[-21.60881,-43.37819],[-21.60911,-43.37903],[-21.61005,-43.38035],[-21.61115,-43.38177],[-21.61184,-43.38256],[-21.61307,-43.38382],[-21.61416,-43.38492],[-21.61471,-43.38535],[-21.61536,-43.38562],[-21.61608,-43.38580],[-21.61697,-43.38584],[-21.61819,-43.38577],[-21.61917,-43.38578],[-21.62029,-43.38575],[-21.62100,-43.38591],[-21.62157,-43.38632],[-21.62189,-43.38676],[-21.62243,-43.38799],[-21.62308,-43.38891],[-21.62372,-43.38931],[-21.62458,-43.38943],[-21.62540,-43.38940],[-21.62598,-43.38951],[-21.62645,-43.38976],[-21.62694,-43.39019],[-21.62743,-43.39101],[-21.62844,-43.39333],[-21.62863,-43.39430],[-21.62841,-43.39539],[-21.62823,-43.39636],[-21.62827,-43.39695],[-21.62852,-43.39757],[-21.62907,-43.39825],[-21.62945,-43.39916],[-21.62945,-43.40035],[-21.62954,-43.40104],[-21.62996,-43.40171],[-21.63040,-43.40171],[-21.63103,-43.40191],[-21.63231,-43.40218],[-21.63351,-43.40243],[-21.63387,-43.40263],[-21.63397,-43.40283],[-21.63407,-43.40357],[-21.63433,-43.40362],[-21.63547,-43.40343],[-21.63639,-43.40326],[-21.63700,-43.40344],[-21.63795,-43.40324],[-21.63865,-43.40370],[-21.63921,-43.40481],[-21.63961,-43.40537],[-21.64006,-43.40552],[-21.64033,-43.40539],[-21.64097,-43.40529],[-21.64211,-43.40577],[-21.64334,-43.40655],[-21.64485,-43.40749],[-21.64534,-43.40831],[-21.64573,-43.40867],[-21.64702,-43.40859],[-21.64731,-43.40867],[-21.64771,-43.40923],[-21.64864,-43.40998],[-21.64943,-43.41140],[-21.65011,-43.41214],[-21.65051,-43.41295],[-21.65066,-43.41432],[-21.65122,-43.41530],[-21.65234,-43.41568],[-21.65259,-43.41696],[-21.65305,-43.41770],[-21.65343,-43.41816],[-21.65338,-43.41902],[-21.65357,-43.42027],[-21.65399,-43.42087],[-21.65432,-43.42172],[-21.65501,-43.42291],[-21.65554,-43.42367],[-21.65621,-43.42524],[-21.65668,-43.42620],[-21.65731,-43.42735],[-21.65796,-43.42846],[-21.65865,-43.42951],[-21.65877,-43.43010],[-21.65934,-43.43090],[-21.66024,-43.43193],[-21.66081,-43.43212],[-21.66174,-43.43253],[-21.66263,-43.43306],[-21.66317,-43.43348],[-21.66362,-43.43357],[-21.66402,-43.43344],[-21.66520,-43.43256],[-21.66617,-43.43139],[-21.66755,-43.43034],[-21.66821,-43.42969],[-21.66847,-43.42967],[-21.66911,-43.43019],[-21.66972,-43.43084],[-21.66985,-43.43151],[-21.67002,-43.43169],[-21.67065,-43.43194],[-21.67121,-43.43303],[-21.67216,-43.43341],[-21.67296,-43.43326],[-21.67425,-43.43292],[-21.67501,-43.43285],[-21.67590,-43.43280],[-21.67679,-43.43275],[-21.67726,-43.43283],[-21.67838,-43.43328],[-21.67993,-43.43395],[-21.68045,-43.43290],[-21.68068,-43.43276],[-21.68089,-43.43279],[-21.68129,-43.43307],[-21.68183,-43.43321],[-21.68294,-43.43296],[-21.68461,-43.43254],[-21.68628,-43.43211],[-21.68795,-43.43169],[-21.68885,-43.43153],[-21.68923,-43.43137],[-21.68956,-43.43094],[-21.68979,-43.43057],[-21.69016,-43.42978],[-21.69035,-43.42947],[-21.69157,-43.42806],[-21.69200,-43.42777],[-21.69281,-43.42781],[-21.69336,-43.42813],[-21.69473,-43.42930],[-21.69509,-43.42929],[-21.69558,-43.42864],[-21.69645,-43.42735],[-21.69795,-43.42516],[-21.69845,-43.42443],[-21.69881,-43.42378],[-21.69890,-43.42332],[-21.69872,-43.42246],[-21.69834,-43.42171],[-21.69796,-43.42097],[-21.69758,-43.42022],[-21.69734,-43.41938],[-21.69744,-43.41868],[-21.69774,-43.41808],[-21.69848,-43.41738],[-21.69900,-43.41700],[-21.69989,-43.41670],[-21.70017,-43.41699],[-21.70131,-43.41837],[-21.70246,-43.41975],[-21.70307,-43.41940],[-21.70396,-43.41865],[-21.70484,-43.41796],[-21.70512,-43.41798],[-21.70536,-43.41801],[-21.70586,-43.41861],[-21.70626,-43.41904],[-21.70632,-43.41978]];
 
+/* ── waypoints: 22 pontos de referência manuais ─────────────────────────── */
 const waypoints = [
   { km:0.0,  lat:-21.74979,lon:-43.35306,ele:686,name:'Partida',              type:'start',       tags:['start'],        desc:'Início · altitude 686m' },
   { km:0.7,  lat:-21.74504,lon:-43.35381,ele:683,name:'Curva S→N',            type:'turn',        tags:['turn'],         desc:'52° de desvio · 683m' },
@@ -212,270 +590,560 @@ const waypoints = [
   { km:39.3, lat:-21.70632,lon:-43.41978,ele:707,name:'Chegada',              type:'end',         tags:['end'],          desc:'Fim da rota · 707m' },
 ];
 
+/* ── elevData: pares [km, altitude] amostrados a cada ~5 pontos do GPX ──── */
 const elevData = [[0,686],[0.29,685],[0.66,683],[0.97,685],[1.29,692],[1.56,699],[1.78,701],[1.94,704],[2.04,706],[2.15,708],[2.48,722],[2.82,738],[3.0,749],[3.22,762],[3.35,765],[3.54,769],[3.8,773],[3.99,778],[4.23,781],[4.4,784],[4.51,786],[4.72,790],[4.91,794],[5.21,800],[5.48,800],[5.7,799],[6.0,797],[6.19,795],[6.39,792],[6.66,786],[6.93,781],[7.13,777],[7.41,779],[7.57,787],[7.77,788],[7.94,783],[8.18,785],[8.37,785],[8.64,785],[8.92,785],[9.23,786],[9.56,787],[9.7,787],[9.98,787],[10.36,789],[10.63,793],[10.83,796],[11.07,797],[11.29,799],[11.45,799],[11.66,801],[11.98,808],[12.38,820],[12.68,816],[13.07,818],[13.45,820],[13.78,826],[14.28,826],[14.78,826],[15.28,764],[15.77,764],[16.27,764],[16.77,764],[17.15,764],[17.3,773],[17.44,775],[17.67,780],[17.83,774],[18.09,769],[18.41,757],[18.62,747],[18.9,750],[19.39,762],[19.74,760],[20.07,769],[20.29,779],[20.61,758],[20.81,751],[21.0,754],[21.21,756],[21.47,757],[21.67,761],[22.05,769],[22.44,766],[22.65,763],[22.81,762],[23.24,759],[23.63,759],[23.86,763],[24.11,769],[24.41,770],[24.59,767],[24.88,774],[25.12,777],[25.28,772],[25.54,759],[25.82,750],[26.07,751],[26.27,753],[26.54,751],[26.71,753],[27.0,768],[27.13,773],[27.3,766],[27.54,763],[27.67,762],[27.89,747],[28.04,738],[28.29,724],[28.58,718],[28.8,725],[29.01,722],[29.18,715],[29.38,712],[29.63,709],[29.79,706],[29.95,707],[30.2,705],[30.46,702],[30.71,701],[30.9,698],[31.24,702],[31.58,695],[31.78,700],[32.08,692],[32.28,695],[32.52,705],[32.96,726],[33.09,732],[33.27,736],[33.39,734],[33.61,723],[33.93,704],[34.22,692],[34.62,687],[34.68,687],[34.92,687],[35.4,687],[35.64,685],[35.87,685],[36.13,686],[36.39,688],[36.53,689],[36.88,689],[37.24,688],[37.38,687],[37.74,686],[37.94,686],[38.13,687],[38.5,687],[38.8,688],[38.98,689],[39.07,693]];
 
-// ── Map engine ────────────────────────────────────────────────────
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BLOCO 2 — MAP ENGINE (motor do mapa Canvas 2D)
+   ────────────────────────────────────────────────────────────────────────────
+   Projeção utilizada: equiretangular com correção pelo cosseno da latitude.
+   Adequada para áreas pequenas (< 50km) onde a distorção é desprezível.
+
+   Sistema de coordenadas do mapa:
+     • Coordenadas geográficas (lat/lon) → coordenadas normalizadas (nx, ny)
+       via geo2n(), usando o centro da rota como origem.
+     • Coordenadas normalizadas → pixels na tela via scale e offsets (offX, offY).
+
+   Estado do viewport (variáveis mutáveis):
+     scale  → pixels por unidade normalizada (zoom atual)
+     offX   → deslocamento horizontal em pixels (pan)
+     offY   → deslocamento vertical em pixels (pan)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Referência ao canvas do mapa e seu contexto 2D */
 const mc = document.getElementById('mapCanvas');
 const mx = mc.getContext('2d');
 
+/* Fator de correção da projeção: compensa o achatamento dos meridianos
+   em latitudes diferentes de 0°. Centro aproximado da rota: -21.685° S */
 const cosLat = Math.cos(-21.685 * Math.PI / 180);
+
+/* Estado atual do viewport — modificado por pan, zoom e fitBounds() */
 let scale = 1, offX = 0, offY = 0;
+
+/* Estado do arraste (pan com mouse) */
 let dragging = false, dStart, oStart;
 
+/**
+ * geo2n — Converte coordenadas geográficas para espaço normalizado.
+ * O ponto (lat=-21.685, lon=-43.385) é a origem (0, 0).
+ * O eixo Y é invertido (lat crescente = Y decrescente) para que Norte fique em cima.
+ *
+ * @param {number} lat  latitude em graus decimais
+ * @param {number} lon  longitude em graus decimais
+ * @returns {[number, number]} [nx, ny] coordenadas normalizadas
+ */
 function geo2n(lat, lon) {
-  return [(lon - (-43.385)) * cosLat, -( lat - (-21.685))];
+  return [(lon - (-43.385)) * cosLat, -(lat - (-21.685))];
 }
 
+/**
+ * fitBounds — Calcula scale, offX, offY para encaixar toda a rota no canvas.
+ * Chamada na inicialização e ao pressionar o botão ⊡.
+ * pad=0.1 adiciona 10% de margem ao redor da rota.
+ *
+ * DEPURAÇÃO: Se a rota aparecer cortada, aumentar o valor de pad.
+ */
 function fitBounds() {
   const W = mc.offsetWidth, H = mc.offsetHeight;
   const pts = track.map(p => geo2n(p[0], p[1]));
   const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
-  const mnx=Math.min(...xs),mxx=Math.max(...xs),mny=Math.min(...ys),mxy=Math.max(...ys);
+  const mnx=Math.min(...xs), mxx=Math.max(...xs);
+  const mny=Math.min(...ys), mxy=Math.max(...ys);
   const rx=mxx-mnx, ry=mxy-mny, pad=0.1;
-  scale = Math.min(W/((rx)*(1+pad*2)), H/((ry)*(1+pad*2)));
+  /* escala = menor entre o fator horizontal e vertical (mantém proporção) */
+  scale = Math.min(W / (rx * (1+pad*2)), H / (ry * (1+pad*2)));
+  /* offsets centram a rota no canvas */
   offX = ((mnx+mxx)/2)*scale - W/2;
   offY = ((mny+mxy)/2)*scale - H/2;
 }
 
+/**
+ * toScreen — Converte lat/lon para coordenadas em pixels na tela.
+ * Aplica a projeção geo2n() e depois o viewport (scale + offsets).
+ *
+ * @param {number} lat
+ * @param {number} lon
+ * @returns {[number, number]} [x, y] em pixels CSS
+ */
 function toScreen(lat, lon) {
-  const [nx,ny] = geo2n(lat, lon);
+  const [nx, ny] = geo2n(lat, lon);
   return [nx*scale - offX, ny*scale - offY];
 }
 
+/**
+ * drawMap — Função principal de renderização do mapa.
+ * Redesenha o canvas inteiro a cada frame (pan/zoom/redimensionamento).
+ * Ordem de renderização (back-to-front):
+ *   1. Fundo escuro
+ *   2. Grade de pontos
+ *   3. Rota GPS (glow + linha principal)
+ *   4. Setas de direção
+ *   5. Marcadores de waypoints
+ *   6. Rosa dos ventos (canto superior direito)
+ *
+ * DEPURAÇÃO: Se o canvas aparecer em branco, verificar se mc.offsetWidth/Height
+ * são > 0 (o container precisa ter dimensões visíveis ao chamar drawMap()).
+ */
 function drawMap() {
-  const dpr = window.devicePixelRatio||1;
+  const dpr = window.devicePixelRatio || 1; /* suporte a telas HiDPI/Retina */
   const W = mc.offsetWidth, H = mc.offsetHeight;
+
+  /* Redimensiona o canvas apenas se necessário (evita reset de estado desnecessário) */
   if (mc.width !== W*dpr || mc.height !== H*dpr) {
     mc.width = W*dpr; mc.height = H*dpr;
-    mx.scale(dpr,dpr);
-    fitBounds();
+    mx.scale(dpr, dpr); /* escala o contexto para DPR */
+    fitBounds();        /* recalcula viewport ao redimensionar */
   }
-  mx.clearRect(0,0,W,H);
-  mx.fillStyle='#111210'; mx.fillRect(0,0,W,H);
 
-  // Dot grid
+  /* 1. Limpa e preenche o fundo */
+  mx.clearRect(0, 0, W, H);
+  mx.fillStyle='#111210'; mx.fillRect(0, 0, W, H);
+
+  /* 2. Grade de pontos decorativos (estética) */
   mx.fillStyle='rgba(42,43,39,0.45)';
-  for(let x=0;x<W;x+=28) for(let y=0;y<H;y+=28) mx.fillRect(x,y,1,1);
+  for(let x=0; x<W; x+=28)
+    for(let y=0; y<H; y+=28)
+      mx.fillRect(x, y, 1, 1);
 
-  // Route
+  /* 3a. Rota GPS — linha principal */
   mx.beginPath();
-  const [sx0,sy0]=toScreen(track[0][0],track[0][1]);
-  mx.moveTo(sx0,sy0);
-  for(let i=1;i<track.length;i++){
-    const [sx,sy]=toScreen(track[i][0],track[i][1]);
-    mx.lineTo(sx,sy);
+  const [sx0,sy0] = toScreen(track[0][0], track[0][1]);
+  mx.moveTo(sx0, sy0);
+  for(let i=1; i<track.length; i++){
+    const [sx,sy] = toScreen(track[i][0], track[i][1]);
+    mx.lineTo(sx, sy);
   }
   mx.strokeStyle='rgba(200,240,96,0.72)'; mx.lineWidth=2.5;
   mx.lineCap='round'; mx.lineJoin='round'; mx.stroke();
 
-  // Route glow
+  /* 3b. Rota GPS — glow suave em volta da linha (efeito luminoso) */
   mx.beginPath();
-  mx.moveTo(sx0,sy0);
-  for(let i=1;i<track.length;i++){
-    const [sx,sy]=toScreen(track[i][0],track[i][1]);
-    mx.lineTo(sx,sy);
+  mx.moveTo(sx0, sy0);
+  for(let i=1; i<track.length; i++){
+    const [sx,sy] = toScreen(track[i][0], track[i][1]);
+    mx.lineTo(sx, sy);
   }
   mx.strokeStyle='rgba(200,240,96,0.12)'; mx.lineWidth=7; mx.stroke();
 
-  // Direction arrows
+  /* 4. Setas de direção — desenhadas a cada 24 pontos ao longo da rota.
+        Calculam o ângulo entre dois pontos consecutivos para orientar a seta.
+        MANUTENÇÃO: Ajustar o valor 24 para aumentar/diminuir a frequência. */
   mx.fillStyle='rgba(200,240,96,0.38)';
-  for(let i=12;i<track.length-8;i+=24){
-    const [x1,y1]=toScreen(track[i][0],track[i][1]);
-    const [x2,y2]=toScreen(track[i+5][0],track[i+5][1]);
-    const ang=Math.atan2(y2-y1,x2-x1);
-    const s=4.5;
-    mx.save(); mx.translate((x1+x2)/2,(y1+y2)/2); mx.rotate(ang);
+  for(let i=12; i<track.length-8; i+=24){
+    const [x1,y1] = toScreen(track[i][0], track[i][1]);
+    const [x2,y2] = toScreen(track[i+5][0], track[i+5][1]);
+    const ang = Math.atan2(y2-y1, x2-x1); /* ângulo em radianos */
+    const s = 4.5; /* tamanho da seta em pixels */
+    mx.save();
+    mx.translate((x1+x2)/2, (y1+y2)/2); /* posiciona no meio do segmento */
+    mx.rotate(ang);
     mx.beginPath(); mx.moveTo(s,0); mx.lineTo(-s,-s*.6); mx.lineTo(-s,s*.6);
-    mx.closePath(); mx.fill(); mx.restore();
+    mx.closePath(); mx.fill();
+    mx.restore();
   }
 
-  // Waypoints
-  const WPC = {start:'#c8f060',end:'#f06060',bifurcation:'#60c8f0',turn:'#f0a040',peak:'#c8f060'};
-  const WPS = {start:7,end:7,bifurcation:6,turn:4.5,peak:5.5};
-  waypoints.forEach(wp=>{
-    const [sx,sy]=toScreen(wp.lat,wp.lon);
-    const c=WPC[wp.type]||'#f0a040', r=WPS[wp.type]||4.5;
-    // glow
-    mx.beginPath(); mx.arc(sx,sy,r+5,0,Math.PI*2);
-    mx.fillStyle=c+'18'; mx.fill();
-    // ring for bifurcation
-    if(wp.type==='bifurcation'){
-      mx.beginPath(); mx.arc(sx,sy,r+3,0,Math.PI*2);
-      mx.strokeStyle=c+'55'; mx.lineWidth=1; mx.stroke();
+  /* 5. Waypoints — marcadores coloridos sobre a rota.
+        WPC → cores por tipo (Waypoint Point Colors)
+        WPS → raios por tipo (Waypoint Point Sizes)
+        Para cada waypoint: glow externo → anel extra (só bifurcações) → ponto central */
+  const WPC = {start:'#c8f060', end:'#f06060', bifurcation:'#60c8f0', turn:'#f0a040', peak:'#c8f060'};
+  const WPS = {start:7, end:7, bifurcation:6, turn:4.5, peak:5.5};
+  waypoints.forEach(wp => {
+    const [sx,sy] = toScreen(wp.lat, wp.lon);
+    const c = WPC[wp.type] || '#f0a040'; /* cor fallback: laranja */
+    const r = WPS[wp.type] || 4.5;       /* raio fallback: 4.5px */
+
+    /* Glow suave ao redor do marcador */
+    mx.beginPath(); mx.arc(sx, sy, r+5, 0, Math.PI*2);
+    mx.fillStyle = c+'18'; mx.fill(); /* cor hex + alpha '18' = ~9% opacidade */
+
+    /* Anel extra animado apenas para bifurcações (destaque visual maior) */
+    if(wp.type === 'bifurcation'){
+      mx.beginPath(); mx.arc(sx, sy, r+3, 0, Math.PI*2);
+      mx.strokeStyle = c+'55'; mx.lineWidth=1; mx.stroke();
     }
-    // dot
-    mx.beginPath(); mx.arc(sx,sy,r,0,Math.PI*2);
-    mx.fillStyle=(wp.type==='start'||wp.type==='end')?c:'#111210';
+
+    /* Ponto central: sólido para start/end, oco (fundo escuro) para os demais */
+    mx.beginPath(); mx.arc(sx, sy, r, 0, Math.PI*2);
+    mx.fillStyle = (wp.type==='start' || wp.type==='end') ? c : '#111210';
     mx.fill();
-    mx.strokeStyle=c; mx.lineWidth=1.8; mx.stroke();
+    mx.strokeStyle = c; mx.lineWidth=1.8; mx.stroke();
   });
 
-  // Compass
-  const cx=W-36,cy=36,cr=14;
+  /* 6. Rosa dos ventos — indicador de orientação no canto superior direito.
+        Triângulo norte verde-lima (accent), triângulo sul cinza escuro. */
+  const cx=W-36, cy=36, cr=14;
   mx.save(); mx.globalAlpha=.4;
-  mx.beginPath(); mx.moveTo(cx,cy-cr); mx.lineTo(cx-cr*.35,cy); mx.lineTo(cx+cr*.35,cy); mx.closePath();
-  mx.fillStyle='#c8f060'; mx.fill();
-  mx.beginPath(); mx.moveTo(cx,cy+cr); mx.lineTo(cx-cr*.35,cy); mx.lineTo(cx+cr*.35,cy); mx.closePath();
-  mx.fillStyle='#444'; mx.fill();
+  /* Ponteiro Norte */
+  mx.beginPath(); mx.moveTo(cx,cy-cr); mx.lineTo(cx-cr*.35,cy); mx.lineTo(cx+cr*.35,cy);
+  mx.closePath(); mx.fillStyle='#c8f060'; mx.fill();
+  /* Ponteiro Sul */
+  mx.beginPath(); mx.moveTo(cx,cy+cr); mx.lineTo(cx-cr*.35,cy); mx.lineTo(cx+cr*.35,cy);
+  mx.closePath(); mx.fillStyle='#444'; mx.fill();
+  /* Letra N */
   mx.globalAlpha=.65; mx.fillStyle='#c8f060'; mx.font=`bold ${cr*.6}px monospace`;
-  mx.textAlign='center'; mx.fillText('N',cx,cy-cr-3);
+  mx.textAlign='center'; mx.fillText('N', cx, cy-cr-3);
   mx.restore();
 }
 
-// Elevation chart
-const ec=document.getElementById('elevCanvas');
-const ectx=ec.getContext('2d');
-function drawElev(){
-  const dpr=window.devicePixelRatio||1;
-  const W=ec.offsetWidth,H=ec.offsetHeight;
-  ec.width=W*dpr; ec.height=H*dpr; ectx.scale(dpr,dpr);
-  const minE=650,maxE=860,pL=5,pR=5,pT=5,pB=16,w=W-pL-pR,h=H-pT-pB;
-  const toX=km=>pL+(km/39.3)*w, toY=e=>pT+h-((e-minE)/(maxE-minE))*h;
-  ectx.fillStyle='#161714'; ectx.fillRect(0,0,W,H);
-  // grid
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BLOCO 3 — GRÁFICO DE ELEVAÇÃO
+   ────────────────────────────────────────────────────────────────────────────
+   Renderiza o perfil de elevação no canvas #elevCanvas.
+   Camadas desenhadas (back-to-front):
+     1. Fundo escuro (#161714)
+     2. Linhas horizontais de grade (700, 750, 800, 850m)
+     3. Área preenchida com gradiente verde-lima
+     4. Linha de elevação em verde-lima
+     5. Ticks verticais coloridos por tipo de waypoint (eixo X)
+     6. Rótulos de quilometragem (eixo X)
+
+   Parâmetros de manutenção:
+     minE / maxE → faixa de altitude visível no gráfico (em metros)
+     pL,pR,pT,pB → padding interno do gráfico (left/right/top/bottom)
+   ════════════════════════════════════════════════════════════════════════════ */
+const ec   = document.getElementById('elevCanvas');
+const ectx = ec.getContext('2d');
+
+function drawElev() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = ec.offsetWidth, H = ec.offsetHeight;
+  /* Redimensiona sempre (o painel pode variar) */
+  ec.width = W*dpr; ec.height = H*dpr; ectx.scale(dpr, dpr);
+
+  /* Faixa de altitude visível e padding interno do gráfico */
+  const minE=650, maxE=860;
+  const pL=5, pR=5, pT=5, pB=16; /* padding: left, right, top, bottom */
+  const w=W-pL-pR, h=H-pT-pB;    /* área útil de desenho */
+
+  /* Funções de mapeamento: quilometragem/altitude → pixels */
+  const toX = km => pL + (km / 39.3) * w; /* 39.3 = distância total da rota */
+  const toY  = e  => pT + h - ((e - minE) / (maxE - minE)) * h;
+
+  /* 1. Fundo */
+  ectx.fillStyle='#161714'; ectx.fillRect(0, 0, W, H);
+
+  /* 2. Grade horizontal com rótulos de altitude */
   ectx.strokeStyle='rgba(42,43,39,.8)'; ectx.lineWidth=.5;
-  [700,750,800,850].forEach(e=>{
-    ectx.beginPath(); ectx.moveTo(pL,toY(e)); ectx.lineTo(pL+w,toY(e)); ectx.stroke();
+  [700, 750, 800, 850].forEach(e => {
+    ectx.beginPath(); ectx.moveTo(pL, toY(e)); ectx.lineTo(pL+w, toY(e)); ectx.stroke();
     ectx.fillStyle='rgba(122,123,116,.5)'; ectx.font='6.5px monospace';
-    ectx.fillText(e+'m',pL+2,toY(e)-2);
+    ectx.fillText(e+'m', pL+2, toY(e)-2); /* rótulo no lado esquerdo */
   });
-  // fill
-  const g=ectx.createLinearGradient(0,pT,0,pT+h);
-  g.addColorStop(0,'rgba(200,240,96,.3)'); g.addColorStop(1,'rgba(200,240,96,.02)');
-  ectx.beginPath(); ectx.moveTo(toX(elevData[0][0]),toY(elevData[0][1]));
-  elevData.forEach(([km,e])=>ectx.lineTo(toX(km),toY(e)));
-  ectx.lineTo(toX(elevData[elevData.length-1][0]),pT+h); ectx.lineTo(toX(0),pT+h);
+
+  /* 3. Área preenchida sob a curva — gradiente de cima para baixo */
+  const g = ectx.createLinearGradient(0, pT, 0, pT+h);
+  g.addColorStop(0, 'rgba(200,240,96,.3)'); /* topo: mais opaco */
+  g.addColorStop(1, 'rgba(200,240,96,.02)'); /* base: quase transparente */
+  ectx.beginPath();
+  ectx.moveTo(toX(elevData[0][0]), toY(elevData[0][1]));
+  elevData.forEach(([km, e]) => ectx.lineTo(toX(km), toY(e)));
+  ectx.lineTo(toX(elevData[elevData.length-1][0]), pT+h); /* fecha abaixo à direita */
+  ectx.lineTo(toX(0), pT+h);                               /* fecha abaixo à esquerda */
   ectx.closePath(); ectx.fillStyle=g; ectx.fill();
-  // line
-  ectx.beginPath(); ectx.moveTo(toX(elevData[0][0]),toY(elevData[0][1]));
-  elevData.forEach(([km,e])=>ectx.lineTo(toX(km),toY(e)));
+
+  /* 4. Linha de elevação sobre a área */
+  ectx.beginPath();
+  ectx.moveTo(toX(elevData[0][0]), toY(elevData[0][1]));
+  elevData.forEach(([km, e]) => ectx.lineTo(toX(km), toY(e)));
   ectx.strokeStyle='#c8f060'; ectx.lineWidth=1.5; ectx.lineJoin='round'; ectx.stroke();
-  // ticks
-  const C2={start:'#c8f060',end:'#f06060',bifurcation:'#60c8f0',turn:'#f0a040',peak:'#c8f060'};
-  waypoints.forEach(wp=>{
-    const x=toX(wp.km);
-    ectx.beginPath(); ectx.moveTo(x,pT+h+1); ectx.lineTo(x,pT+h+6);
-    ectx.strokeStyle=C2[wp.type]||'#f0a040';
-    ectx.lineWidth=wp.type==='bifurcation'?1.8:1; ectx.stroke();
+
+  /* 5. Ticks coloridos no eixo X — um por waypoint, cor = tipo.
+        C2 (Color map 2) — mesmo mapeamento usado nos marcadores do mapa. */
+  const C2 = {start:'#c8f060', end:'#f06060', bifurcation:'#60c8f0', turn:'#f0a040', peak:'#c8f060'};
+  waypoints.forEach(wp => {
+    const x = toX(wp.km);
+    ectx.beginPath(); ectx.moveTo(x, pT+h+1); ectx.lineTo(x, pT+h+6);
+    ectx.strokeStyle = C2[wp.type] || '#f0a040';
+    ectx.lineWidth = wp.type==='bifurcation' ? 1.8 : 1; /* bifurcações com traço mais espesso */
+    ectx.stroke();
   });
-  // km labels
+
+  /* 6. Rótulos de quilometragem no eixo X */
   ectx.fillStyle='rgba(122,123,116,.55)'; ectx.font='6.5px monospace'; ectx.textAlign='center';
-  [0,10,20,30,39].forEach(km=>ectx.fillText(km===39?'39km':km,toX(km),pT+h+13));
+  [0, 10, 20, 30, 39].forEach(km =>
+    ectx.fillText(km===39 ? '39km' : km, toX(km), pT+h+13)
+  );
 }
 
-// Sidebar
-const wpList=document.getElementById('wpList');
-const TL={turn:'CURVA',bifurcation:'BIFURCAÇÃO',climb:'SUBIDA',descent:'DESCIDA',start:'PARTIDA',end:'CHEGADA',bifurc:'BIFURCAÇÃO',peak:'PICO'};
-const TC={turn:'tag-turn',bifurcation:'tag-bifurc',climb:'tag-climb',descent:'tag-descent',start:'tag-start',end:'tag-end',bifurc:'tag-bifurc',peak:'tag-climb'};
-const WPC2={start:'#c8f060',end:'#f06060',bifurcation:'#60c8f0',turn:'#f0a040',peak:'#c8f060'};
 
-waypoints.forEach((wp,idx)=>{
-  const div=document.createElement('div');
-  div.className=`waypoint ${wp.type}`;
-  const tags=wp.tags.map(t=>`<span class="tag ${TC[t]||'tag-turn'}">${TL[t]||t}</span>`).join('');
-  div.innerHTML=`
-    <div class="wp-line"><div class="wp-dot"></div><div class="wp-connector"></div></div>
+/* ════════════════════════════════════════════════════════════════════════════
+   BLOCO 4 — SIDEBAR: geração dinâmica dos itens de waypoint
+   ────────────────────────────────────────────────────────────────────────────
+   Para cada objeto no array `waypoints`, cria um elemento .waypoint no DOM
+   e registra um event listener de clique.
+
+   Dicionários de mapeamento:
+     TL (Tag Labels)   → chave do tag → texto exibido na etiqueta
+     TC (Tag Classes)  → chave do tag → classe CSS aplicada ao <span>
+     WPC2              → tipo do waypoint → cor hexadecimal para o tooltip
+   ════════════════════════════════════════════════════════════════════════════ */
+const wpList = document.getElementById('wpList');
+
+/* Mapeamento de chave de tag → rótulo exibido nas etiquetas coloridas */
+const TL = {
+  turn:'CURVA', bifurcation:'BIFURCAÇÃO', climb:'SUBIDA',
+  descent:'DESCIDA', start:'PARTIDA', end:'CHEGADA',
+  bifurc:'BIFURCAÇÃO', peak:'PICO'
+};
+
+/* Mapeamento de chave de tag → classe CSS da etiqueta (definidas no CSS) */
+const TC = {
+  turn:'tag-turn', bifurcation:'tag-bifurc', climb:'tag-climb',
+  descent:'tag-descent', start:'tag-start', end:'tag-end',
+  bifurc:'tag-bifurc', peak:'tag-climb'
+};
+
+/* Mapeamento de tipo de waypoint → cor para uso inline no tooltip */
+const WPC2 = {
+  start:'#c8f060', end:'#f06060',
+  bifurcation:'#60c8f0', turn:'#f0a040', peak:'#c8f060'
+};
+
+/* Cria e insere cada item da sidebar */
+waypoints.forEach((wp, idx) => {
+  const div = document.createElement('div');
+  div.className = `waypoint ${wp.type}`; /* classe de tipo define a cor do ponto */
+
+  /* Gera o HTML das etiquetas a partir do array tags[] do waypoint */
+  const tags = wp.tags.map(t =>
+    `<span class="tag ${TC[t]||'tag-turn'}">${TL[t]||t}</span>`
+  ).join('');
+
+  /* Estrutura interna do item:
+       .wp-line  → coluna esquerda com ponto + linha vertical
+       .wp-info  → coluna direita com km, nome, descrição e etiquetas
+     A descrição exibida é a parte após o primeiro '·' (texto secundário). */
+  div.innerHTML = `
+    <div class="wp-line">
+      <div class="wp-dot"></div>
+      <div class="wp-connector"></div>
+    </div>
     <div class="wp-info">
       <div class="wp-km">KM ${wp.km.toFixed(1)} · ${wp.ele}m alt.</div>
       <div class="wp-name">${wp.name}</div>
       <div class="wp-desc">${wp.desc.split('·').slice(1).join('·').trim()}</div>
       <div class="wp-tags">${tags}</div>
     </div>`;
-  div.addEventListener('click',()=>{
-    document.querySelectorAll('.waypoint').forEach(w=>w.classList.remove('active'));
+
+  /* Ao clicar num item da sidebar:
+       1. Remove .active de todos os itens
+       2. Adiciona .active no item clicado
+       3. Reposiciona o viewport do mapa centrado no waypoint
+       4. Redesenha o mapa
+       5. Exibe o tooltip sobre o marcador */
+  div.addEventListener('click', () => {
+    document.querySelectorAll('.waypoint').forEach(w => w.classList.remove('active'));
     div.classList.add('active');
-    // Center on wp
-    const W=mc.offsetWidth, H=mc.offsetHeight;
-    const [nx,ny]=geo2n(wp.lat,wp.lon);
-    offX=nx*scale-W/2; offY=ny*scale-H/2;
+    /* Calcula novos offsets para centralizar o waypoint no canvas */
+    const W = mc.offsetWidth, H = mc.offsetHeight;
+    const [nx, ny] = geo2n(wp.lat, wp.lon);
+    offX = nx*scale - W/2;
+    offY = ny*scale - H/2;
     drawMap();
-    const [sx,sy]=toScreen(wp.lat,wp.lon);
-    showTip(sx,sy,wp);
+    const [sx, sy] = toScreen(wp.lat, wp.lon);
+    showTip(sx, sy, wp);
   });
+
   wpList.appendChild(div);
 });
 
-// Tooltip
-const tip=document.getElementById('mapTooltip');
-function showTip(sx,sy,wp){
-  const W=mc.offsetWidth,H=mc.offsetHeight;
-  tip.innerHTML=`<div class="tt-km">KM ${wp.km.toFixed(1)} · ${wp.ele}m</div>
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BLOCO 5 — TOOLTIP
+   ────────────────────────────────────────────────────────────────────────────
+   O tooltip é um div absoluto (#mapTooltip) que flutua sobre o canvas.
+   Seu conteúdo e posição são calculados por showTip() a cada clique.
+   ════════════════════════════════════════════════════════════════════════════ */
+const tip = document.getElementById('mapTooltip');
+
+/**
+ * showTip — Exibe o tooltip flutuante com informações de um waypoint.
+ * Ajusta a posição para que o tooltip não saia dos limites do mapa.
+ *
+ * @param {number} sx  coordenada X do waypoint em pixels (relativa ao canvas)
+ * @param {number} sy  coordenada Y do waypoint em pixels
+ * @param {object} wp  objeto waypoint com km, ele, name, desc, type
+ *
+ * DEPURAÇÃO: Se o tooltip não aparecer, verificar se tip.style.display
+ * está sendo definido como 'block' e se sx/sy são valores válidos.
+ */
+function showTip(sx, sy, wp) {
+  const W = mc.offsetWidth, H = mc.offsetHeight;
+  /* Monta o HTML interno do tooltip */
+  tip.innerHTML = `
+    <div class="tt-km">KM ${wp.km.toFixed(1)} · ${wp.ele}m</div>
     <div style="font-weight:600;color:${WPC2[wp.type]||'var(--text)'};">${wp.name}</div>
     <div style="font-size:.68rem;color:var(--muted);margin-top:.15rem;">${wp.desc}</div>`;
-  let tx=sx+10,ty=sy-10;
-  if(tx+200>W) tx=sx-210;
-  if(ty+80>H) ty=H-85;
-  if(ty<0) ty=5;
-  tip.style.left=tx+'px'; tip.style.top=ty+'px'; tip.style.display='block';
+  /* Posição padrão: 10px à direita e 10px acima do clique */
+  let tx = sx+10, ty = sy-10;
+  /* Ajuste de borda: evita que o tooltip saia pela direita */
+  if(tx + 200 > W) tx = sx - 210;
+  /* Ajuste de borda: evita que o tooltip saia por baixo ou pelo topo */
+  if(ty + 80  > H) ty = H - 85;
+  if(ty < 0)       ty = 5;
+  tip.style.left    = tx + 'px';
+  tip.style.top     = ty + 'px';
+  tip.style.display = 'block';
 }
-mc.addEventListener('click',e=>{
-  const r=mc.getBoundingClientRect(), mx2=e.clientX-r.left, my2=e.clientY-r.top;
-  let hit=null,hd=15;
-  waypoints.forEach((wp,i)=>{
-    const [sx,sy]=toScreen(wp.lat,wp.lon);
-    const d=Math.hypot(sx-mx2,sy-my2);
-    if(d<hd){hit={wp,i,sx,sy};hd=d;}
+
+/* Listener de clique no canvas do mapa.
+   Itera sobre todos os waypoints para encontrar o mais próximo do clique.
+   Se um waypoint estiver dentro de 15px do clique → mostra tooltip + destaca sidebar.
+   Clique em área vazia → oculta o tooltip. */
+mc.addEventListener('click', e => {
+  const r = mc.getBoundingClientRect();
+  const mx2 = e.clientX - r.left;  /* posição do clique relativa ao canvas */
+  const my2 = e.clientY - r.top;
+  let hit = null, hd = 15; /* hd = distância mínima de detecção (15px) */
+
+  waypoints.forEach((wp, i) => {
+    const [sx, sy] = toScreen(wp.lat, wp.lon);
+    const d = Math.hypot(sx-mx2, sy-my2); /* distância euclidiana */
+    if(d < hd){ hit = {wp, i, sx, sy}; hd = d; } /* mantém o mais próximo */
   });
+
   if(hit){
-    document.querySelectorAll('.waypoint').forEach(w=>w.classList.remove('active'));
+    /* Destaca o item correspondente na sidebar */
+    document.querySelectorAll('.waypoint').forEach(w => w.classList.remove('active'));
     wpList.children[hit.i]?.classList.add('active');
-    wpList.children[hit.i]?.scrollIntoView({block:'nearest',behavior:'smooth'});
-    showTip(hit.sx,hit.sy,hit.wp);
-  } else tip.style.display='none';
+    wpList.children[hit.i]?.scrollIntoView({block:'nearest', behavior:'smooth'});
+    showTip(hit.sx, hit.sy, hit.wp);
+  } else {
+    tip.style.display = 'none'; /* oculta se clicou fora de qualquer waypoint */
+  }
 });
 
-// Pan
-mc.addEventListener('mousedown',e=>{dragging=true;dStart=[e.clientX,e.clientY];oStart=[offX,offY];tip.style.display='none';});
-window.addEventListener('mousemove',e=>{if(!dragging)return;offX=oStart[0]-(e.clientX-dStart[0]);offY=oStart[1]-(e.clientY-dStart[1]);drawMap();});
-window.addEventListener('mouseup',()=>dragging=false);
 
-// Wheel zoom
-mc.addEventListener('wheel',e=>{
+/* ════════════════════════════════════════════════════════════════════════════
+   BLOCO 6 — INTERAÇÕES: Pan, Zoom por scroll, Zoom por botões, Touch
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Pan com mouse (arrastar) ────────────────────────────────────────────────
+   mousedown → inicia arraste, guarda posição inicial
+   mousemove → atualiza offX/offY com o delta do movimento
+   mouseup   → finaliza arraste
+   NOTA: mousemove e mouseup escutam no window (não no canvas) para evitar
+   que o arraste seja interrompido ao sair dos limites do canvas. */
+mc.addEventListener('mousedown', e => {
+  dragging = true;
+  dStart = [e.clientX, e.clientY]; /* posição inicial do cursor */
+  oStart = [offX, offY];           /* offsets iniciais do viewport */
+  tip.style.display = 'none';      /* oculta tooltip durante arraste */
+});
+window.addEventListener('mousemove', e => {
+  if(!dragging) return;
+  offX = oStart[0] - (e.clientX - dStart[0]); /* inverte: arrastar direita → move mapa para direita */
+  offY = oStart[1] - (e.clientY - dStart[1]);
+  drawMap();
+});
+window.addEventListener('mouseup', () => { dragging = false; });
+
+/* ── Zoom por scroll da roda do mouse ───────────────────────────────────────
+   Zoom centrado na posição do cursor (não no centro do canvas).
+   Fator de zoom: 1.12× por notch do scroll.
+   preventDefault evita que a página role durante o zoom. */
+mc.addEventListener('wheel', e => {
   e.preventDefault();
-  const r=mc.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;
-  const f=e.deltaY<0?1.12:1/1.12;
-  offX=px-(px-offX)*f; offY=py-(py-offY)*f; scale*=f; drawMap();
-},{passive:false});
+  const r = mc.getBoundingClientRect();
+  const px = e.clientX - r.left; /* posição do cursor no canvas */
+  const py = e.clientY - r.top;
+  const f = e.deltaY < 0 ? 1.12 : 1/1.12; /* scroll para cima = ampliar */
+  /* Reposiciona os offsets para manter o ponto sob o cursor fixo */
+  offX = px - (px - offX) * f;
+  offY = py - (py - offY) * f;
+  scale *= f;
+  drawMap();
+}, {passive: false}); /* passive:false é necessário para preventDefault() funcionar */
 
-// Zoom buttons
-document.getElementById('zoomIn').onclick=()=>{
-  const W=mc.offsetWidth,H=mc.offsetHeight;
-  offX=W/2-(W/2-offX)*1.3; offY=H/2-(H/2-offY)*1.3; scale*=1.3; drawMap();};
-document.getElementById('zoomOut').onclick=()=>{
-  const W=mc.offsetWidth,H=mc.offsetHeight;
-  offX=W/2-(W/2-offX)/1.3; offY=H/2-(H/2-offY)/1.3; scale/=1.3; drawMap();};
-document.getElementById('zoomFit').onclick=()=>{fitBounds();drawMap();};
+/* ── Zoom por botões (+/−/⊡) ────────────────────────────────────────────────
+   Zoom centrado no centro do canvas (diferente do zoom por scroll). */
+document.getElementById('zoomIn').onclick = () => {
+  const W=mc.offsetWidth, H=mc.offsetHeight;
+  offX = W/2 - (W/2 - offX)*1.3;  /* expande em torno do centro */
+  offY = H/2 - (H/2 - offY)*1.3;
+  scale *= 1.3; drawMap();
+};
+document.getElementById('zoomOut').onclick = () => {
+  const W=mc.offsetWidth, H=mc.offsetHeight;
+  offX = W/2 - (W/2 - offX)/1.3;  /* contrai em torno do centro */
+  offY = H/2 - (H/2 - offY)/1.3;
+  scale /= 1.3; drawMap();
+};
+/* Botão ⊡ recalcula fitBounds e mostra a rota completa */
+document.getElementById('zoomFit').onclick = () => { fitBounds(); drawMap(); };
 
-// Touch
-let tDist=null;
-mc.addEventListener('touchstart',e=>{
-  if(e.touches.length===1){dragging=true;dStart=[e.touches[0].clientX,e.touches[0].clientY];oStart=[offX,offY];}
-},{passive:true});
-mc.addEventListener('touchmove',e=>{
-  e.preventDefault();
-  if(e.touches.length===1&&dragging){
-    offX=oStart[0]-(e.touches[0].clientX-dStart[0]);
-    offY=oStart[1]-(e.touches[0].clientY-dStart[1]);
-    drawMap();
-  } else if(e.touches.length===2){
-    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-    if(tDist){
-      const f=d/tDist;
-      const cx=(e.touches[0].clientX+e.touches[1].clientX)/2;
-      const cy=(e.touches[0].clientY+e.touches[1].clientY)/2;
-      const r=mc.getBoundingClientRect();
-      const px=cx-r.left,py=cy-r.top;
-      offX=px-(px-offX)*f; offY=py-(py-offY)*f; scale*=f; drawMap();
-    }
-    tDist=d;
+/* ── Suporte a touch (mobile/tablet) ────────────────────────────────────────
+   1 dedo  → pan (arrastar)
+   2 dedos → pinch-to-zoom
+   tDist   → distância entre dedos no frame anterior (para calcular fator de zoom) */
+let tDist = null;
+
+mc.addEventListener('touchstart', e => {
+  if(e.touches.length === 1){
+    dragging = true;
+    dStart = [e.touches[0].clientX, e.touches[0].clientY];
+    oStart = [offX, offY];
   }
-},{passive:false});
-mc.addEventListener('touchend',()=>{dragging=false;tDist=null;});
+}, {passive: true});
 
-// Init
-new ResizeObserver(()=>{drawMap();drawElev();}).observe(document.getElementById('map-wrap'));
-new ResizeObserver(()=>drawElev()).observe(document.getElementById('elev-wrap'));
-fitBounds(); drawMap(); drawElev();
+mc.addEventListener('touchmove', e => {
+  e.preventDefault(); /* evita scroll da página */
+  if(e.touches.length === 1 && dragging){
+    /* Pan com 1 dedo */
+    offX = oStart[0] - (e.touches[0].clientX - dStart[0]);
+    offY = oStart[1] - (e.touches[0].clientY - dStart[1]);
+    drawMap();
+  } else if(e.touches.length === 2){
+    /* Pinch-to-zoom com 2 dedos */
+    const d = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    if(tDist){
+      const f = d / tDist; /* fator de zoom relativo ao frame anterior */
+      /* Centro do pinch como pivot do zoom */
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const r  = mc.getBoundingClientRect();
+      const px = cx - r.left, py = cy - r.top;
+      offX = px - (px - offX) * f;
+      offY = py - (py - offY) * f;
+      scale *= f;
+      drawMap();
+    }
+    tDist = d; /* atualiza para o próximo frame */
+  }
+}, {passive: false});
+
+mc.addEventListener('touchend', () => { dragging = false; tDist = null; });
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BLOCO 7 — INICIALIZAÇÃO
+   ────────────────────────────────────────────────────────────────────────────
+   ResizeObserver monitora mudanças de tamanho dos containers e redesenha
+   os canvas automaticamente (responsivo a redimensionamento de janela e
+   layout changes).
+   A ordem importa: fitBounds() precisa ser chamada antes de drawMap().
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Observa redimensionamento do container do mapa → redesenha mapa */
+new ResizeObserver(() => { drawMap(); drawElev(); })
+  .observe(document.getElementById('map-wrap'));
+
+/* Observa redimensionamento do container da elevação → redesenha elevação */
+new ResizeObserver(() => drawElev())
+  .observe(document.getElementById('elev-wrap'));
+
+/* Renderização inicial: calcula bounds → desenha mapa → desenha elevação */
+fitBounds();
+drawMap();
+drawElev();
+
 </script>
 </body>
 </html>
